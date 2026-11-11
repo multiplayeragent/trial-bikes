@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trial Bikes</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #8fd0f5; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
+  [hidden] { display: none !important; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #0009; font-weight: 800; }
+  #pos { top: max(12px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); font-size: 38px; line-height: 1; }
+  #pos small { font-size: 17px; opacity: .85; }
+  #info { top: calc(max(12px, env(safe-area-inset-top)) + 44px); left: max(16px, env(safe-area-inset-left)); font-size: 14px; }
+  #time { top: max(12px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); text-align: right; font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; }
+  #time small { display: block; font-size: 14px; color: #ffd23f; margin-top: 4px; }
+  #map { top: calc(max(12px, env(safe-area-inset-top)) + 72px); left: 50%; transform: translateX(-50%); width: min(420px, calc(100vw - 32px)); height: 10px; border-radius: 5px; background: #0005; border: 2px solid #fff8; }
+  #map i { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; border: 2px solid #fff; box-sizing: border-box; }
+  #map i.me { width: 16px; height: 16px; margin: -8px 0 0 -8px; z-index: 2; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; opacity: .85; white-space: nowrap; }
+  #hint { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 26px); left: 0; right: 0; text-align: center; font-size: 16px; padding: 0 16px; }
+  body.touch #net { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 84px); }
+  body.touch #hint { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 104px); }
+  #count { inset: 0; display: grid; place-items: center; font-size: min(26vw, 180px); color: #ffd23f; -webkit-text-stroke: 4px #6a2c00; }
+  #msg { top: 30%; left: 0; right: 0; text-align: center; font-size: 30px; color: #ffd23f; transition: opacity .3s, transform .3s; opacity: 0; transform: scale(.85); padding: 0 16px; }
+  #msg.on { opacity: 1; transform: scale(1); }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0006; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 16px; background: #22304af2; border: 1px solid #ffffff2a; }
+  .card h2 { margin: 0 0 8px; font-size: 22px; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffd23f; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li em { font-style: normal; opacity: .6; font-size: 12px; margin-left: 6px; }
+  .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; opacity: .8; }
+  .card p { margin: 12px 0 0; font-size: 13px; opacity: .8; }
+  button.go { width: 100%; min-height: 48px; margin-top: 14px; border: 0; border-radius: 12px; background: #ffd23f; color: #22304a; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  .pad { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; gap: 12px; }
+  .pad button, #reset { width: 76px; height: 76px; border-radius: 50%; border: 2px solid #ffffff88; background: #00000033; color: #fff; font: 800 15px system-ui, sans-serif; touch-action: none; }
+  .pad button.on { background: #ffffff55; }
+  #padL { left: max(16px, env(safe-area-inset-left)); } #padR { right: max(16px, env(safe-area-inset-right)); }
+  #reset { position: fixed; width: 48px; height: 48px; font-size: 22px; top: calc(max(12px, env(safe-area-inset-top)) + 96px); right: max(16px, env(safe-area-inset-right)); }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud" id="pos"></div>
+<div class="hud" id="info"></div>
+<div class="hud" id="time"></div>
+<div class="hud" id="map"></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="hud" id="count"></div>
+<div class="hud" id="msg"></div>
+<div class="pad" id="padL" hidden><button data-k="back">◀</button><button data-k="fwd">▶</button></div>
+<div class="pad" id="padR" hidden><button data-k="brake">BRAKE</button><button data-k="gas">GAS</button></div>
+<button id="reset" hidden title="Back to the checkpoint">↺</button>
+<div id="over" hidden><div class="card">
+  <h2 id="otitle">Results</h2><ol id="results"></ol>
+  <h3 id="btitle">Best times on this track</h3><ol id="board"><li class="note">Loading…</li></ol>
+  <button class="go" id="again">Race again</button>
+  <p id="next"></p>
+</div></div>
+<script>
+/* ═══ TRIAL BIKES · a Multiplayer Agent starter ═══════════════════════════════════════
+ * Side-view dirt bike racing over hilly tracks. Throttle, brake and lean your way over
+ * jumps, steps and dips; land a flip for a second off your time; crash on your head and
+ * you start again from the last checkpoint. Everyone rides the same track at once as
+ * see-through ghosts. Three tracks, one per race. Versus, 2–8 players; bots fill empty seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ the bike's physics, flips, checkpoints, the three tracks, bots, timers
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   TRACKS ........ the ground's height everywhere, built from each track's seed
+ *   BIKE PHYSICS .. ONE function that moves any bike: yours, a bot, everyone's
+ *   RIDING ........ the autopilot bots use (lean to match the ground, flip off big jumps)
+ *   RACE (HOST) ... the race phases (grid, race, done), which track, and the bots. Only the host writes these.
+ *   MY BIKE ....... input, checkpoints, crashes, flips, the finish. Each player writes only its own.
+ *   DRAWING ....... sky, hills, ground, bikes, riders, dust and confetti
+ *   HUD & RESULTS . place, time, minimap, countdown, results, leaderboard
+ *   INPUT ......... keyboard and touch
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player rides its OWN bike with its own physics and writes its own entity: `k`
+ *     (one packed JSON field: race id, position, angle, velocity, checkpoint, flips, finish
+ *     time, crashed-until) about 15 times a second, `hb` (heartbeat) once a second, and
+ *     `n`/`c` (name, color) once. Bikes don't touch: everyone else is a ghost.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `race` (id, version
+ *     `v`, phase, track, start and end times, results) and `bots`. A new host adopts both.
+ *   - The tracks are built from fixed seeds, so the ground is never sent: race.track says
+ *     which one, and every client builds the same hills.
+ *   - A new race starts only when the host bumps race.id; every client then goes back to
+ *     the start line. Someone who joins mid-race starts from the line with their own clock.
+ *   - Intent: "again" {} from the results card asks the host to start the next race now.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboards "best-time-1/2/3": each player's best time on each track (stored as
+ *     600000 - ms, so higher is better), shown on the results card.
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 6,               // bots fill the race up to this many bikes
+  gravity: 19,            // m/s², a bit more than real for snappy jumps
+  engine: 17,             // drive force at the back wheel (per unit of mass)
+  vmax: 19,               // top speed the engine can push to, m/s
+  brake: 6, brakeMax: 26, // brakes: how hard, and the most they can do
+  roll: 0.12,             // rolling resistance
+  spring: 1100, damp: 34, // how the tyres push back off the ground
+  leanGround: 7.5,        // lean, radians/s², with a wheel on the ground
+  leanAir: 19,            // lean in the air (flips!)
+  spinDamp: 2.2,          // angular slowdown on the ground (in the air it is small)
+  wheelR: 0.38,
+  substep: 1 / 240,       // physics step, seconds
+  flipBonus: 1000,        // ms off your time for each flip you land
+  checkpointEvery: 100,   // metres between checkpoints
+  crashFor: 1300,         // ms you lie in the dirt before you respawn
+  countdown: 5000,        // ms on the grid before GO
+  afterFirst: 30000,      // ms the race stays open after the first finisher
+  resultsFor: 12000,      // ms the results show before the next race
+  botSkill: [0.78, 0.95], // bots' throttle (share of full)
+  botFlips: 0.3,          // chance a bot tries a flip off a big jump
+  board: "best-time",     // leaderboard prefix: one board per track (best-time-1, -2, -3)
+  // The tracks: name, seed (same hills for everyone), length (m), which pieces it uses, and colors.
+  tracks: [
+    { name: "Green Hills", seed: 101, length: 560, pieces: ["hills", "launch", "whoops", "table", "hills", "dip", "bigHill"], sky: ["#7cc6f0", "#d6f0ff"], far: "#9cc7d9", near: "#6fae6a", ground: "#8a5a34", top: "#5fbf4a" },
+    { name: "Red Canyon", seed: 202, length: 600, pieces: ["bigHill", "launch", "dip", "drop", "hills", "table", "launch"], sky: ["#f0a060", "#ffe0b0"], far: "#d98a6a", near: "#b4573a", ground: "#9a4a2a", top: "#d9864a" },
+    { name: "Dusk Quarry", seed: 303, length: 600, pieces: ["steps", "launch", "whoops", "dip", "steps", "drop", "table"], sky: ["#3a2a6a", "#e08a8a"], far: "#5a4a7a", near: "#4a4060", ground: "#5a5560", top: "#a0a0b0" },
+  ],
+};
+const BOT_NAMES = ["Revvy", "Mudlark", "Skids", "Hopper", "Gravel", "Wheelie", "Bolt"];
+const COLORS = ["#ff4d4d", "#3da5ff", "#ffd23f", "#52d273", "#c77dff", "#ff8c42", "#ff6fb5", "#3de0d0"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'trial-bikes',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never change what this returns). */
+function shared(key, fb) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = parse(raw, fb); memo.set(key, { raw, v }); return v;
+}
+let net = null, S = { entities: { players: {} }, shared: {} }, dropped = false;
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+let wakeHold = 0, lastFrameAt = 0; // a tab whose frames stopped (frozen, or in the background) doesn't act as host, nor for 700ms after it wakes (see frame())
+const isHost = () => livePlayers()[0] === net.sessionId && performance.now() >= wakeHold && !(lastFrameAt && performance.now() - lastFrameAt > 1000);
+
+// ── TRACKS ──────────────────────────────────────────────────────────────────────────
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const angle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const DX = 0.5; // the ground is a height every half metre
+/** Build track t: heights H (every DX metres), where the finish is, and the decorations. */
+function buildTrack(t) {
+  const T = CONFIG.tracks[t], rnd = mulberry32(T.seed), H = [];
+  let y = 0;
+  const flat = (len) => { for (let x = 0; x < len; x += DX) H.push(y); };
+  const ease = (len, dy) => { const y0 = y; for (let x = 0; x < len; x += DX) H.push(y0 + dy * (1 - Math.cos(Math.PI * (x / len))) / 2); y = y0 + dy; };
+  const kick = (len, dy) => { const y0 = y; for (let x = 0; x < len; x += DX) H.push(y0 + dy * (1 - Math.cos((Math.PI / 2) * (x / len)))); y = y0 + dy; }; // gets steeper to the lip: a jump
+  const fall = (len, dy) => { const y0 = y; for (let x = 0; x < len; x += DX) H.push(y0 - dy * Math.sin((Math.PI / 2) * (x / len))); y = y0 - dy; }; // steepest at the top: the ground falls away
+  const PIECES = {
+    hills() { for (let n = 2 + Math.floor(rnd() * 3); n > 0; n--) { const len = 14 + rnd() * 16, a = 1.5 + rnd() * 3; ease(len / 2, a); ease(len / 2, -a); } },
+    whoops() { for (let n = 6 + Math.floor(rnd() * 5); n > 0; n--) { ease(1.8, 0.55); ease(1.8, -0.55); } flat(4); },
+    table() { flat(6); kick(7, 2.8); flat(10 + rnd() * 8); ease(12, -2.8); flat(6); },
+    dip() { flat(6); kick(6, 2.2); ease(6, -3.2); flat(1 + rnd() * 2); ease(6, 3.2); ease(10, -2.2); flat(4); },
+    launch() { flat(10); kick(4.5, 2.2); fall(6, 4); ease(20, -3); flat(8); }, // a short steep kicker over a drop: big air, room for a flip
+    bigHill() { const a = 6 + rnd() * 4; ease(28, a); flat(4); ease(22, -a); flat(5); },
+    drop() { flat(4); kick(8, 2.2); flat(2); fall(5, 3.5); ease(10, -1.5); flat(8); },
+    steps() { for (let n = 3 + Math.floor(rnd() * 2); n > 0; n--) { flat(2.6); ease(1.2, 0.45); } flat(5); ease(14, -(y > 0 ? Math.min(y, 3) : 0)); flat(4); },
+  };
+  flat(30);
+  const pieces = T.pieces;
+  let k = 0;
+  while (H.length * DX < T.length - 60) {
+    PIECES[pieces[k % pieces.length]]();
+    if (rnd() < 0.5) flat(4 + rnd() * 10);
+    k++;
+    if (y > 12) ease(24, -6); else if (y < -10) ease(24, 6); // keep the track from wandering off
+  }
+  const finish = H.length * DX + 10;
+  flat(80);
+  // smooth the joins a little so the bikes don't catch on corners
+  for (let pass = 0; pass < 2; pass++) for (let i = 1; i < H.length - 1; i++) H[i] = (H[i - 1] + H[i] * 2 + H[i + 1]) / 4;
+  const deco = [];
+  for (let x = 10; x < H.length * DX; x += 6 + rnd() * 14) deco.push({ x, kind: rnd() < 0.55 ? "tree" : "rock", s: 0.7 + rnd() * 0.7 });
+  return { t, H, finish, deco, len: H.length * DX };
+}
+let track = buildTrack(0);
+function groundY(x) {
+  const H = track.H, f = clamp(x / DX, 0, H.length - 1.001), i = Math.floor(f);
+  return H[i] + (H[i + 1] - H[i]) * (f - i);
+}
+function slopeAt(x) { const H = track.H, i = clamp(Math.floor(x / DX), 0, H.length - 2); return (H[i + 1] - H[i]) / DX; }
+const checkpointX = (cp) => cp * CONFIG.checkpointEvery;
+
+// ── BIKE PHYSICS ────────────────────────────────────────────────────────────────────
+// A bike is one rigid body: centre (x, y), angle a (nose up is +), velocity (vx, vy), spin w.
+// Two wheels hang off it; each one pushes off the ground like a stiff spring, and the back
+// wheel drives. The rider's head is a point: if it touches the ground, that's a crash.
+const WHEELS = [{ x: -0.68, y: -0.32, drive: true }, { x: 0.7, y: -0.32, drive: false }];
+const HEAD = { x: 0.12, y: 1.06, r: 0.2 };
+function offset(b, lx, ly) { const c = Math.cos(b.a), s = Math.sin(b.a); return [lx * c - ly * s, lx * s + ly * c]; }
+function newBike(x) { const a = Math.atan(slopeAt(x)); return { x, y: groundY(x) + 0.72, a, vx: 0, vy: 0, w: 0, gr: 2, airT: 0, spin: 0, wheel: 0 }; }
+/** Move bike b by dt with controls ctl = { gas 0..1, brake 0..1, lean -1..1 (back is +) }.
+ *  Returns { crashed, flips }: flips = full turns landed on this step. */
+function stepBike(b, ctl, dt) {
+  const ev = { crashed: false, flips: 0 }, n = Math.max(1, Math.ceil(dt / CONFIG.substep)), h = dt / n;
+  for (let k = 0; k < n && !ev.crashed; k++) substep(b, ctl, h, ev);
+  return ev;
+}
+function substep(b, ctl, h, ev) {
+  let fx = 0, fy = -CONFIG.gravity, tq = 0, touching = 0;
+  for (const wh of WHEELS) {
+    const [rx, ry] = offset(b, wh.x, wh.y), px = b.x + rx, py = b.y + ry;
+    const sl = slopeAt(px), inv = 1 / Math.hypot(1, sl), nx = -sl * inv, ny = inv, tx = inv, ty = sl * inv;
+    const pen = CONFIG.wheelR - (py - groundY(px)) * ny;
+    if (pen <= 0) continue;
+    touching++;
+    const vx = b.vx - b.w * ry, vy = b.vy + b.w * rx, vn = vx * nx + vy * ny, vt = vx * tx + vy * ty;
+    const f = Math.max(0, CONFIG.spring * pen - CONFIG.damp * vn);
+    let ft = -CONFIG.roll * vt;
+    if (wh.drive && ctl.gas) ft += CONFIG.engine * ctl.gas * Math.max(0, 1 - vt / CONFIG.vmax);
+    if (ctl.brake) ft -= clamp(vt * CONFIG.brake, -CONFIG.brakeMax, CONFIG.brakeMax) * ctl.brake;
+    const Fx = f * nx + ft * tx, Fy = f * ny + ft * ty;
+    fx += Fx; fy += Fy; tq += rx * Fy - ry * Fx;
+    if (wh.drive) b.wheel = vt;
+  }
+  tq += (ctl.lean || 0) * (touching ? CONFIG.leanGround : CONFIG.leanAir);
+  b.w += (tq - b.w * (touching ? CONFIG.spinDamp : 0.3)) * h;
+  b.vx += fx * h; b.vy += fy * h;
+  b.x += b.vx * h; b.y += b.vy * h; b.a += b.w * h;
+  // the rider's head (or the bike's middle) in the dirt: crash
+  const [hx, hy] = offset(b, HEAD.x, HEAD.y);
+  if (b.y + hy - HEAD.r < groundY(b.x + hx) || b.y - 0.1 < groundY(b.x)) { ev.crashed = true; return; }
+  if (!touching) { b.airT += h; b.spin += b.w * h; }
+  else { if (b.airT > 0.3) ev.flips += Math.floor((Math.abs(b.spin) + 1.1) / (Math.PI * 2)); b.airT = 0; b.spin = 0; }
+  b.gr = touching;
+}
+
+// ── RIDING ──────────────────────────────────────────────────────────────────────────
+/** Bots and the ?attract autopilot: keep the nose on the slope ahead, gas on, and now and
+ *  then lean back hard off a big jump for a flip. */
+function autoRide(b, skill, flipChance) {
+  if (b.gr) {
+    b.flip = 0;
+    const ahead = clamp(Math.atan(slopeAt(b.x + 1.2 + Math.max(0, b.vx) * 0.18)) * 0.8, -0.45, 0.6), err = angle(ahead - b.a); // never dive at a drop
+    const steepDown = slopeAt(b.x + 4) < -0.8 && b.vx > 11;
+    return { gas: steepDown ? 0 : skill, brake: steepDown ? 0.4 : 0, lean: clamp(err * 4.5 - b.w * 0.6, -1, 1) };
+  }
+  if (!b.flip) b.flip = b.vy > 4 && Math.random() < flipChance ? 1 : -1; // decided once, at take-off
+  if (b.flip === 1 && b.spin < Math.PI - 0.3) return { gas: 0, brake: 0, lean: 1 }; // half way round: the spin carries the rest
+  const land = clamp(Math.atan(slopeAt(b.x + b.vx * 0.35)), -0.6, 0.6), err = angle(land - b.a);
+  return { gas: 0.4, brake: 0, lean: clamp(err * 3.5 - b.w * 0.5, -1, 1) };
+}
+
+// ── RACE (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { bots: new Map(), wasHost: false, lastBots: 0, raceId: 0, last: null };
+/** The race as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function race() {
+  const r = shared("race", null);
+  return host.last && isHost() && (!r || host.last.v > r.v) ? host.last : r;
+}
+function writeRace(r) { r = { ...r, v: (race()?.v ?? 0) + 1 }; host.last = r; net.setShared("race", JSON.stringify(r)); return r; }
+const newRace = (id) => writeRace({ id, phase: "grid", track: (id - 1) % CONFIG.tracks.length, startAt: Date.now() + CONFIG.countdown, endsAt: 0, results: [] });
+
+/** Everyone in this race as { id, name, x, ft, fl }, leader first: finishers by time, then by how far along. */
+function racers() {
+  const out = [], r = race(), live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (!live.has(id)) continue;
+    if (id === net.sessionId) { if (!ATTRACT) out.push({ id, name: "You", x: me.b.x, ft: me.ft, fl: me.fl, c: myColor, mine: true }); continue; }
+    const k = parse(p.k, null);
+    if (k && r && k.r === r.id) out.push({ id, name: p.n || "Player", x: k.x, ft: k.ft, fl: k.fl || 0, c: p.c });
+  }
+  for (const b of botList()) out.push({ id: b.i, name: b.n, x: b.x, ft: b.ft, fl: b.fl || 0, c: b.c, bot: true });
+  if (ATTRACT) out.push({ id: net.sessionId, name: myName, x: me.b.x, ft: me.ft, fl: me.fl, c: myColor, mine: true });
+  return out.sort((a, b) => (a.ft && b.ft ? a.ft - b.ft : a.ft ? -1 : b.ft ? 1 : b.x - a.x));
+}
+/** The bots as published: the host's live copy, or the last list it wrote. */
+function botList() {
+  if (isHost()) return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: b.x, y: b.y, a: b.a, vx: b.vx, vy: b.vy, cp: b.cp, ft: b.ft, fl: b.fl, cr: b.cr, ln: b.lean || 0, sk: b.skill }));
+  return shared("bots", []);
+}
+function spawnBots(humans) {
+  const want = Math.max(0, CONFIG.seats - humans.length);
+  const keep = [...host.bots.values()].slice(0, want);
+  host.bots.clear(); keep.forEach((b) => host.bots.set(b.id, b));
+  while (host.bots.size < want) {
+    const used = new Set([...host.bots.values()].map((b) => b.name)), name = BOT_NAMES.find((n) => !used.has(n)) || "Bot";
+    const taken = new Set([...Object.values(S.entities.players || {}).map((p) => p.c), myColor, ...[...host.bots.values()].map((b) => b.color)]);
+    const [lo, hi] = CONFIG.botSkill, id = "b" + Math.random().toString(36).slice(2, 6);
+    host.bots.set(id, { id, name, color: COLORS.find((c) => !taken.has(c)) || "#cccccc", skill: lo + Math.random() * (hi - lo) });
+  }
+  for (const b of host.bots.values()) Object.assign(b, newBike(3), { cp: 0, ft: 0, fl: 0, cr: 0, lean: 0, best: 3, stuckAt: 0, flip: 0 });
+}
+function adoptBots() {
+  host.bots.clear();
+  for (const b of shared("bots", [])) host.bots.set(b.i, Object.assign(newBike(b.x), { id: b.i, name: b.n, color: b.c, skill: b.sk || 0.85, x: b.x, y: b.y, a: b.a, vx: b.vx || 0, vy: b.vy || 0, cp: b.cp || 0, ft: b.ft || 0, fl: b.fl || 0, cr: b.cr || 0, lean: 0, best: b.x, stuckAt: Date.now(), flip: 0 }));
+}
+
+function hostTick(dt, now) {
+  if (!host.wasHost) { host.wasHost = true; adoptBots(); } // adopt the bots exactly as state has them
+  let r = race();
+  const humans = livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
+  if (!r) r = newRace(1);
+  if (host.raceId !== r.id) { host.raceId = r.id; useTrack(r.track); if (r.phase === "grid") spawnBots(humans); }
+  else if (r.phase === "grid" && host.bots.size !== Math.max(0, CONFIG.seats - humans.length)) spawnBots(humans); // someone joined or left before GO
+  const t = Date.now();
+  if (r.phase === "grid" && t >= r.startAt) r = writeRace({ ...r, phase: "race" });
+  if (r.phase === "race") {
+    const all = racers(), done = all.filter((x) => x.ft);
+    const humansDone = all.filter((x) => !x.bot && (!ATTRACT || !x.mine)).every((x) => x.ft);
+    if (done.length && !r.endsAt) r = writeRace({ ...r, endsAt: t + CONFIG.afterFirst });
+    if ((done.length && humansDone && humans.length) || (r.endsAt && t > r.endsAt) || t - r.startAt > 300000 || (ATTRACT && done.length >= 3)) {
+      r = writeRace({ ...r, phase: "done", endsAt: t + CONFIG.resultsFor, results: all.map((x) => ({ id: x.id, n: x.mine ? myName : x.name, ft: x.ft || 0, fl: x.fl || 0 })) });
+    }
+  }
+  if (r.phase === "done" && t > r.endsAt) r = newRace(r.id + 1);
+  for (const b of host.bots.values()) stepBot(b, dt, r, t);
+  if (now - host.lastBots > 100) {
+    host.lastBots = now;
+    net.setShared("bots", JSON.stringify(botList().map((b) => ({ ...b, x: +b.x.toFixed(2), y: +b.y.toFixed(2), a: +b.a.toFixed(2), vx: +b.vx.toFixed(1), vy: +b.vy.toFixed(1), ln: +b.ln.toFixed(1), sk: +b.sk.toFixed(2) }))));
+  }
+}
+/** One bot: ride (or lie in the dirt after a crash), checkpoints, finish, and a reset if it gets stuck. */
+function stepBot(b, dt, r, t) {
+  if (b.cr) { if (t > b.cr) { Object.assign(b, newBike(checkpointX(b.cp) + 2), { cr: 0, best: checkpointX(b.cp) + 2, stuckAt: t }); } else { stepBike(b, { gas: 0, brake: 0, lean: 0 }, dt); return; } }
+  const racing = r.phase === "race" && !b.ft;
+  const ctl = racing ? autoRide(b, b.skill, CONFIG.botFlips) : { gas: 0, brake: 1, lean: 0 };
+  b.lean = ctl.lean;
+  const ev = stepBike(b, ctl, dt);
+  if (ev.crashed) { b.cr = t + CONFIG.crashFor; return; }
+  b.fl += ev.flips;
+  if (!racing) { b.stuckAt = t; return; }
+  while (b.x >= checkpointX(b.cp + 1) && checkpointX(b.cp + 1) < track.finish) b.cp++;
+  if (b.x >= track.finish) b.ft = Math.max(1, t - r.startAt - b.fl * CONFIG.flipBonus);
+  if (b.x > b.best + 1) { b.best = b.x; b.stuckAt = t; } else if (t - b.stuckAt > 4000) b.cr = t + 300; // stuck: back to the checkpoint
+}
+
+// ── MY BIKE ─────────────────────────────────────────────────────────────────────────
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+  ["Ace", "Blaze", "Comet", "Flash", "Jet", "Spark"][Math.floor(Math.random() * 6)] + " " + (10 + Math.floor(Math.random() * 90));
+let myColor = COLORS[0]; // picked on join: the first color nobody in the room has
+/** Two people joined at once in one color (or a bot has mine): the one with the higher sessionId picks a free one. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), botColors = botList().map((b) => b.c);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId) && !botColors.includes(myColor)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botColors]), free = COLORS.find((c) => !taken.has(c));
+  if (free) { myColor = free; net.me.set("c", free); }
+}
+// b: my bike; t0: when my clock started; cp: last checkpoint; fl: flips landed; ft: my finish time (net of flips)
+const me = { b: newBike(3), t0: 0, cp: 0, fl: 0, ft: 0, cr: 0, raceId: -1, lastSend: 0, best: 0, submitted: -1, lean: 0, shake: 0 };
+const input = { gas: false, brake: false, back: false, fwd: false, reset: false };
+
+function useTrack(t) { if (track.t !== t) track = buildTrack(t); }
+function resetToStart(r) {
+  me.raceId = r.id; useTrack(r.track);
+  Object.assign(me, { b: newBike(3), t0: r.phase === "grid" ? r.startAt : Date.now(), cp: 0, fl: 0, ft: 0, cr: 0 });
+  rider = null; $("over").hidden = true;
+}
+function respawn() { me.b = newBike(checkpointX(me.cp) + 2); me.cr = 0; rider = null; }
+
+function myTick(dt, r, t) {
+  if (me.raceId !== r.id) resetToStart(r);
+  const racing = r.phase === "race" && !me.ft;
+  if (me.cr) { // lying in the dirt: the bike tumbles on its own, then back to the checkpoint
+    stepBike(me.b, { gas: 0, brake: 0, lean: 0 }, dt);
+    if (t > me.cr) respawn();
+  } else {
+    let ctl;
+    if (ATTRACT) ctl = racing ? autoRide(me.b, 0.88, 0.85) : { gas: 0, brake: 1, lean: 0 };
+    else ctl = racing ? { gas: input.gas ? 1 : 0, brake: input.brake ? 1 : 0, lean: (input.back ? 1 : 0) - (input.fwd ? 1 : 0) } : { gas: 0, brake: 1, lean: 0 };
+    me.lean += ((ctl.lean || 0) - me.lean) * Math.min(1, dt * 10);
+    const ev = stepBike(me.b, ctl, dt);
+    if (ev.crashed) crash(t);
+    else if (ev.flips && racing) { me.fl += ev.flips; toast(ev.flips > 1 ? `${ev.flips}× FLIP! −${ev.flips}s` : "FLIP! −1s", 1200); beep(660, 0.1); setTimeout(() => beep(990, 0.18), 100); burst(me.b.x, me.b.y + 1, "#ffd23f", 24); }
+    if (input.reset && racing) { input.reset = false; crash(t, true); }
+    if (racing) {
+      while (me.b.x >= checkpointX(me.cp + 1) && checkpointX(me.cp + 1) < track.finish) { me.cp++; toast("Checkpoint!", 900); beep(520, 0.12); }
+      if (me.b.x >= track.finish) {
+        me.ft = Math.max(1, t - me.t0 - me.fl * CONFIG.flipBonus);
+        if (!me.best || me.ft < me.best) me.best = me.ft;
+        toast(`Finished ${ord(racers().findIndex((x) => x.mine) + 1)}!`, 2500); burst(me.b.x, me.b.y + 2, "#ffffff", 60);
+        beep(660, 0.15); setTimeout(() => beep(880, 0.15), 140); setTimeout(() => beep(1320, 0.35), 280);
+      }
+    }
+  }
+  input.reset = false;
+  const now = performance.now();
+  if (now - me.lastSend > 66) {
+    me.lastSend = now;
+    const b = me.b;
+    net.me.set("k", JSON.stringify({ r: me.raceId, x: +b.x.toFixed(2), y: +b.y.toFixed(2), a: +b.a.toFixed(2), vx: +b.vx.toFixed(1), vy: +b.vy.toFixed(1), cp: me.cp, fl: me.fl, ft: me.ft, cr: me.cr, ln: +me.lean.toFixed(1) }));
+  }
+}
+function crash(t, quiet) {
+  me.cr = t + (quiet ? 300 : CONFIG.crashFor);
+  if (quiet) return;
+  rider = { x: me.b.x, y: me.b.y + 0.8, vx: me.b.vx * 0.7, vy: Math.max(3, me.b.vy + 4), rot: me.b.a, w: -6 };
+  me.shake = 1; toast("Crashed! Back to the checkpoint…", 1200); thud(); burst(me.b.x, me.b.y, "#c9a07a", 30);
+}
+
+// ── DRAWING ─────────────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const cv = $("game"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1, SCALE = 30, VY = 0.6; // SCALE: pixels per metre; VY: how far down the screen my bike sits
+function fit() {
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR;
+  SCALE = ATTRACT ? W / 19 : W < H ? W / 13 : Math.min(W / 28, H / 14); // about 28 m across on a laptop, 13 m on a phone held upright
+  VY = W < H ? 0.5 : 0.6;
+}
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+const cam = { x: 0, y: 0 };
+const sx = (x) => (x - cam.x) * SCALE + W * 0.38, sy = (y) => H * VY - (y - cam.y) * SCALE;
+/** Draw in metres from here on (y up), until the next screen() call. */
+function world() { ctx.setTransform(DPR * SCALE, 0, 0, -DPR * SCALE, DPR * (W * 0.38 - cam.x * SCALE), DPR * (H * VY + cam.y * SCALE)); }
+function screen() { ctx.setTransform(DPR, 0, 0, DPR, 0, 0); }
+
+function drawSky() {
+  const T = CONFIG.tracks[track.t];
+  screen();
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, T.sky[0]); g.addColorStop(1, T.sky[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // far and near hills, sliding slower than the ground
+  for (const [k, col, amp, base] of [[0.15, T.far, 70, 0.52], [0.35, T.near, 50, 0.66]]) {
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, H);
+    for (let px = 0; px <= W + 8; px += 8) { const u = (px + cam.x * SCALE * k) / 140; ctx.lineTo(px, H * base - (Math.sin(u) * 0.6 + Math.sin(u * 2.3 + 1) * 0.3 + Math.sin(u * 0.37) * 0.8) * amp - cam.y * SCALE * k * 0.5); }
+    ctx.lineTo(W, H); ctx.fill();
+  }
+}
+function drawGround() {
+  const T = CONFIG.tracks[track.t], x0 = cam.x - (W * 0.38) / SCALE - 2, x1 = cam.x + (W * 0.62) / SCALE + 2, bottom = cam.y - H / SCALE - 5;
+  world();
+  // trees and rocks behind the track
+  for (const d of track.deco) {
+    if (d.x < x0 - 3 || d.x > x1 + 3) continue;
+    const gy = groundY(d.x);
+    if (d.kind === "tree") { ctx.fillStyle = "#6a4a2a"; ctx.fillRect(d.x - 0.15 * d.s, gy - 0.2, 0.3 * d.s, 1.6 * d.s); ctx.fillStyle = track.t === 2 ? "#3a5a4a" : "#3a8a3a"; ctx.beginPath(); ctx.moveTo(d.x - 1.1 * d.s, gy + 1.2 * d.s); ctx.lineTo(d.x, gy + 4 * d.s); ctx.lineTo(d.x + 1.1 * d.s, gy + 1.2 * d.s); ctx.fill(); }
+    else { ctx.fillStyle = "#8a8070"; ctx.beginPath(); ctx.ellipse(d.x, gy, 0.7 * d.s, 0.45 * d.s, 0, 0, Math.PI * 2); ctx.fill(); }
+  }
+  // checkpoint flags and the finish arch
+  for (let cp = 1; checkpointX(cp) < track.finish; cp++) {
+    const x = checkpointX(cp), gy = groundY(x), passed = cp <= me.cp;
+    ctx.strokeStyle = "#eee"; ctx.lineWidth = 0.08; ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x, gy + 2.6); ctx.stroke();
+    ctx.fillStyle = passed ? "#52d273" : "#ff8c42"; ctx.beginPath(); ctx.moveTo(x, gy + 2.6); ctx.lineTo(x + 1.1, gy + 2.3); ctx.lineTo(x, gy + 2.0); ctx.fill();
+  }
+  const fx = track.finish, fy = groundY(fx);
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 2; j++) { ctx.fillStyle = (i + j) % 2 ? "#111" : "#fff"; ctx.fillRect(fx - 0.5 + j * 0.5, fy + 3.2 + i * 0.4, 0.5, 0.4); }
+  ctx.fillStyle = "#ddd"; ctx.fillRect(fx - 0.6, fy, 0.15, 6.4); ctx.fillRect(fx + 0.45, fy, 0.15, 6.4);
+  // the ground itself, with a grassy (or sandy, or stony) top
+  ctx.beginPath(); ctx.moveTo(x0, bottom);
+  for (let x = Math.floor(x0 / DX) * DX; x <= x1; x += DX) ctx.lineTo(x, groundY(x));
+  ctx.lineTo(x1, bottom); ctx.closePath(); ctx.fillStyle = T.ground; ctx.fill();
+  ctx.beginPath(); // a darker band of soil under the top
+  for (let x = Math.floor(x0 / DX) * DX; x <= x1; x += DX) ctx.lineTo(x, groundY(x) - 1.1 - Math.sin(x * 0.7) * 0.2);
+  ctx.strokeStyle = "#0000001a"; ctx.lineWidth = 0.9; ctx.stroke();
+  ctx.beginPath();
+  for (let x = Math.floor(x0 / DX) * DX; x <= x1; x += DX) ctx.lineTo(x, groundY(x) - 0.12);
+  ctx.strokeStyle = T.top; ctx.lineWidth = 0.32; ctx.lineJoin = "round"; ctx.stroke();
+  ctx.fillStyle = "#0002";
+  for (let x = Math.floor(x0 / 3) * 3; x <= x1; x += 3) { const r = mulberry32(Math.floor(x))(); ctx.fillRect(x + r, groundY(x + r) - 0.8 - r * 1.5, 0.35, 0.25); }
+}
+/** One bike in world space. ghost: see-through, wheels kept on the ground; lean: the rider's lean. */
+function drawBike(b, color, ghost, lean, crashed) {
+  ctx.globalAlpha = ghost ? (ATTRACT ? 0.8 : 0.55) : 1;
+  const spin = -b.x / CONFIG.wheelR;
+  for (const wh of WHEELS) {
+    const [rx, ry] = offset(b, wh.x, wh.y); let px = b.x + rx, py = b.y + ry;
+    if (ghost) py = Math.max(py, groundY(px) + CONFIG.wheelR * 0.92);
+    ctx.lineWidth = 0.12; ctx.strokeStyle = "#1d1b1a"; ctx.beginPath(); ctx.arc(px, py, CONFIG.wheelR - 0.06, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = 0.035; ctx.strokeStyle = "#cfd3da"; ctx.beginPath();
+    for (let s = 0; s < 6; s++) { const q = spin + (s * Math.PI) / 3; ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(q) * 0.28, py + Math.sin(q) * 0.28); }
+    ctx.stroke();
+  }
+  ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a);
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.strokeStyle = "#444"; ctx.lineWidth = 0.1; ctx.beginPath(); ctx.moveTo(-0.68, -0.32); ctx.lineTo(-0.05, -0.02); ctx.stroke(); // swingarm
+  ctx.strokeStyle = "#c8ccd4"; ctx.lineWidth = 0.09; ctx.beginPath(); ctx.moveTo(0.7, -0.32); ctx.lineTo(0.42, 0.42); ctx.stroke(); // fork
+  ctx.fillStyle = "#333"; ctx.fillRect(-0.28, -0.18, 0.46, 0.3); // engine
+  ctx.fillStyle = color; ctx.beginPath(); // tank, seat and fenders in one shape
+  [[-0.95, 0.3], [-0.55, 0.36], [-0.1, 0.3], [0.2, 0.42], [0.45, 0.42], [0.35, 0.12], [-0.1, 0.06], [-0.6, 0.12], [-0.98, 0.18]].forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.fill();
+  ctx.fillStyle = "#222"; ctx.fillRect(-0.62, 0.3, 0.55, 0.09); // seat
+  ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(0.48, 0.05); ctx.quadraticCurveTo(0.75, 0.22, 1.02, 0.02); ctx.lineTo(0.95, -0.02); ctx.quadraticCurveTo(0.75, 0.13, 0.52, 0); ctx.fill(); // front fender
+  ctx.strokeStyle = "#333"; ctx.lineWidth = 0.06; ctx.beginPath(); ctx.moveTo(0.38, 0.42); ctx.lineTo(0.3, 0.6); ctx.stroke(); // handlebar
+  if (!crashed) drawRider(lean, color);
+  ctx.restore(); ctx.globalAlpha = 1;
+}
+/** The rider, in the bike's own frame; lean shifts the body back (+) or forward (-). */
+function drawRider(lean, color) {
+  const hip = [-0.32 - lean * 0.08, 0.5], sh = [0.02 - lean * 0.22, 0.92 - Math.abs(lean) * 0.05], head = [sh[0] + 0.1, sh[1] + 0.2], hand = [0.3, 0.6];
+  ctx.strokeStyle = "#2a2f3a"; ctx.lineWidth = 0.14;
+  ctx.beginPath(); ctx.moveTo(hip[0], hip[1]); ctx.lineTo(0.14 - lean * 0.05, 0.3); ctx.lineTo(-0.05, 0.0); ctx.stroke(); // leg: hip, knee, foot peg
+  ctx.strokeStyle = color; ctx.lineWidth = 0.2; ctx.beginPath(); ctx.moveTo(hip[0], hip[1]); ctx.lineTo(sh[0], sh[1]); ctx.stroke(); // body
+  ctx.strokeStyle = "#2a2f3a"; ctx.lineWidth = 0.09; ctx.beginPath(); ctx.moveTo(sh[0], sh[1]); ctx.lineTo((sh[0] + hand[0]) / 2 + 0.05, (sh[1] + hand[1]) / 2 - 0.08); ctx.lineTo(hand[0], hand[1]); ctx.stroke(); // arm
+  ctx.fillStyle = "#f4f4f4"; ctx.beginPath(); ctx.arc(head[0], head[1], 0.17, 0, Math.PI * 2); ctx.fill(); // helmet
+  ctx.fillStyle = color; ctx.fillRect(head[0] - 0.17, head[1] + 0.02, 0.2, 0.08);
+  ctx.fillStyle = "#1b2a3a"; ctx.fillRect(head[0] + 0.03, head[1] - 0.06, 0.14, 0.09); // visor
+}
+/** A rider flying off after a crash: a tumbling stick figure. */
+let rider = null; // mine
+function drawFlyingRider(rd, color, alpha) {
+  ctx.globalAlpha = alpha; ctx.save(); ctx.translate(rd.x, rd.y); ctx.rotate(rd.rot);
+  ctx.strokeStyle = color; ctx.lineWidth = 0.2; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(0, -0.3); ctx.lineTo(0, 0.3); ctx.stroke();
+  ctx.strokeStyle = "#2a2f3a"; ctx.lineWidth = 0.1; ctx.beginPath(); ctx.moveTo(0, -0.3); ctx.lineTo(-0.25, -0.7); ctx.moveTo(0, -0.3); ctx.lineTo(0.25, -0.65); ctx.moveTo(0, 0.25); ctx.lineTo(-0.35, 0.05); ctx.moveTo(0, 0.25); ctx.lineTo(0.35, 0.1); ctx.stroke();
+  ctx.fillStyle = "#f4f4f4"; ctx.beginPath(); ctx.arc(0, 0.48, 0.17, 0, Math.PI * 2); ctx.fill();
+  ctx.restore(); ctx.globalAlpha = 1;
+}
+function tickRider(rd, dt) {
+  rd.vy -= CONFIG.gravity * dt; rd.x += rd.vx * dt; rd.y += rd.vy * dt; rd.rot += rd.w * dt;
+  const gy = groundY(rd.x) + 0.3; if (rd.y < gy) { rd.y = gy; rd.vy = Math.abs(rd.vy) * 0.35; rd.vx *= 0.6; rd.w *= 0.6; }
+}
+// Dust, sparks and confetti: dots in world space.
+const parts = [];
+function burst(x, y, color, n) { for (let i = 0; i < n; i++) parts.push({ x, y, vx: (Math.random() - 0.5) * 10, vy: Math.random() * 9, life: 0.6 + Math.random() * 0.8, max: 1.4, c: color, s: 0.12 + Math.random() * 0.12, g: 1 }); }
+function dust(x, y, vx) { parts.push({ x, y, vx: -vx * 0.2 + (Math.random() - 0.5), vy: 0.5 + Math.random(), life: 0.7, max: 0.7, c: "#d9bf96", s: 0.25 + Math.random() * 0.2, g: -0.1 }); }
+function drawParts(dt) {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const q = parts[i]; q.life -= dt; if (q.life <= 0) { parts.splice(i, 1); continue; }
+    q.vy -= CONFIG.gravity * q.g * dt; q.x += q.vx * dt; q.y += q.vy * dt;
+    ctx.globalAlpha = Math.min(1, q.life / q.max * 1.5); ctx.fillStyle = q.c; ctx.fillRect(q.x - q.s / 2, q.y - q.s / 2, q.s, q.s);
+  }
+  ctx.globalAlpha = 1;
+  if (parts.length > 400) parts.splice(0, parts.length - 400);
+}
+// Sound: tiny WebAudio blips, started by the first key or touch.
+let actx = null;
+function beep(freq, dur, type = "square", vol = 0.06) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+  o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + dur);
+}
+function thud() { beep(90, 0.3, "sawtooth", 0.1); beep(60, 0.4, "square", 0.06); }
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const ord = (n) => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
+const fmt = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}.${String(Math.floor((ms % 1000) / 10)).padStart(2, "0")}`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let toastTimer = 0;
+function toast(text, ms = 1500) { if (ATTRACT) return; const m = $("msg"); m.textContent = text; m.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => m.classList.remove("on"), ms); }
+let board = null, boardFor = -1, lastCount = "", started = 0;
+function hud(r, now) {
+  const t = Date.now();
+  const count = r.phase === "grid" && r.startAt - t < 3000 ? String(Math.max(1, Math.ceil((r.startAt - t) / 1000))) : r.phase === "race" && t - r.startAt < 900 ? "GO!" : "";
+  if (count !== lastCount) { lastCount = count; if (count === "GO!") beep(880, 0.4); else if (count) beep(440, 0.15); }
+  $("count").textContent = count;
+  const order = racers(), T = CONFIG.tracks[track.t];
+  $("map").innerHTML = order.map((x) => `<i class="${x.mine ? "me" : ""}" style="left:${clamp((x.ft ? track.finish : x.x) / track.finish, 0, 1) * 100}%;background:${esc(x.c || "#ccc")}"></i>`).join("");
+  if (ATTRACT) { for (const id of ["pos", "info", "time", "net", "hint"]) $(id).textContent = ""; return; }
+  const at = order.findIndex((x) => x.mine) + 1, raw = r.phase === "race" ? Math.max(0, t - me.t0) : 0;
+  $("pos").innerHTML = at ? `${ord(at)} <small>/ ${order.length}</small>` : "";
+  $("info").textContent = `Track ${track.t + 1}: ${T.name} · checkpoint ${me.cp}`;
+  $("time").innerHTML = me.ft ? `${fmt(me.ft)}<small>finished${me.fl ? ` · ${me.fl} flip${me.fl > 1 ? "s" : ""}` : ""}</small>` : `${fmt(raw)}${me.fl ? `<small>−${me.fl}s for ${me.fl} flip${me.fl > 1 ? "s" : ""}</small>` : ""}`;
+  $("hint").textContent = r.phase === "grid" && r.startAt - t >= 3000 ? `Next: Track ${r.track + 1}, ${CONFIG.tracks[r.track].name}` : me.ft && r.phase === "race" ? "Waiting for the others…" :
+    now - started < 15000 ? (touchUI ? "GAS and BRAKE · ◀ ▶ lean · land a flip for −1s" : "↑ gas · ↓ brake · ←/→ lean back/forward · R: back to checkpoint · land a flip for −1s") : "";
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the race" : ""}`;
+  $("over").hidden = r.phase !== "done";
+  if (r.phase === "done") {
+    const win = r.results[0];
+    $("otitle").textContent = win && win.ft ? (win.id === net.sessionId ? "You win!" : `${win.n} wins!`) : "Results";
+    $("results").innerHTML = r.results.map((x) => `<li class="${x.id === net.sessionId ? "me" : ""}">${esc(x.n)}${x.fl ? `<em>${x.fl} flip${x.fl > 1 ? "s" : ""}</em>` : ""}<span>${x.ft ? fmt(x.ft) : "DNF"}</span></li>`).join("");
+    $("btitle").textContent = `Best times on ${T.name}`;
+    $("next").textContent = `Next race in ${Math.max(0, Math.ceil((r.endsAt - t) / 1000))}s, on ${CONFIG.tracks[r.id % CONFIG.tracks.length].name}`;
+    if (boardFor !== r.id) { boardFor = r.id; showBoard(r); }
+  }
+}
+function showBoard(r) {
+  const list = $("board");
+  if (!net || net.offline || typeof MP === "undefined") { list.innerHTML = "<li class=\"note\">Leaderboards need a connection.</li>"; return; }
+  if (!board) board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl });
+  const lb = board.leaderboard(`${CONFIG.board}-${r.track + 1}`);
+  const mine = r.results.find((x) => x.id === net.sessionId);
+  const submit = mine && mine.ft && me.submitted !== r.id ? lb.submit(Math.max(0, 600000 - mine.ft)).catch(() => null) : Promise.resolve();
+  me.submitted = r.id;
+  submit.then(() => lb.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${fmt(600000 - e.score)}</span></li>`).join("") : "<li class=\"note\">No times yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class=\"note\">Couldn't load the leaderboard.</li>"; });
+}
+function again() { const r = race(); if (r && r.phase === "done" && isHost()) newRace(r.id + 1); }
+$("again").onclick = () => { if (isHost()) again(); else net.send("again", {}); };
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("padL").hidden = $("padR").hidden = $("reset").hidden = !touchUI;
+document.body.classList.toggle("touch", touchUI);
+const wakeAudio = () => { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } };
+const KEYS = { ArrowUp: "gas", w: "gas", W: "gas", ArrowDown: "brake", s: "brake", S: "brake", ArrowLeft: "back", a: "back", A: "back", ArrowRight: "fwd", d: "fwd", D: "fwd", r: "reset", R: "reset" };
+addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.key]; if (k) { e.preventDefault(); if (k === "reset") { if (!e.repeat) input.reset = true; } else input[k] = true; } });
+addEventListener("keyup", (e) => { const k = KEYS[e.key]; if (k && k !== "reset") input[k] = false; });
+for (const b of document.querySelectorAll(".pad button")) {
+  const k = b.dataset.k, on = (v) => { input[k] = v; b.classList.toggle("on", v); };
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); wakeAudio(); b.setPointerCapture(e.pointerId); on(true); });
+  for (const ev of ["pointerup", "pointercancel"]) b.addEventListener(ev, () => on(false));
+}
+$("reset").addEventListener("pointerdown", (e) => { e.preventDefault(); input.reset = true; });
+cv.addEventListener("pointerdown", wakeAudio);
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+const views = new Map(); // id -> drawn ghost for everyone but me: { x, y, a, ... , rider }
+/** Ease a ghost toward where it said it was, plus how far it has ridden since. */
+function follow(id, k, dt, now, exact) {
+  let v = views.get(id);
+  if (!v) { v = { x: k.x, y: k.y, a: k.a, raw: "", seen: now }; views.set(id, v); }
+  v.seen = now;
+  if (exact) { Object.assign(v, { x: k.x, y: k.y, a: k.a }); return v; }
+  const key = `${k.x},${k.y},${k.a}`;
+  if (v.raw !== key) Object.assign(v, { raw: key, sx: k.x, sy: k.y, sa: k.a, vx: k.vx || 0, vy: k.vy || 0, at: now });
+  const age = Math.min(0.25, (now - v.at) / 1000), tx = v.sx + v.vx * age, ty = v.sy + v.vy * age - 0.5 * CONFIG.gravity * age * age * (v.vy ? 1 : 0);
+  if (Math.hypot(tx - v.x, ty - v.y) > 8) Object.assign(v, { x: tx, y: ty, a: v.sa });
+  const e = 1 - Math.pow(0.0005, dt);
+  v.x += (tx - v.x) * e; v.y += (ty - v.y) * e; v.a += angle(v.sa - v.a) * e;
+  return v;
+}
+/** A ghost's crash: start its flying rider when its crashed-until time appears. */
+function ghostRider(v, k, dt) {
+  if (k.cr && k.cr > Date.now()) { if (!v.rider || v.crAt !== k.cr) { v.crAt = k.cr; v.rider = { x: v.x, y: v.y + 0.8, vx: (k.vx || 0) * 0.7, vy: Math.max(3, (k.vy || 0) + 4), rot: v.a, w: -6 }; } tickRider(v.rider, dt); return true; }
+  v.rider = null; return false;
+}
+function game() { const r = race(); return { phase: r && r.phase, id: r && r.id, track: track.t, me: { x: +me.b.x.toFixed(1), cp: me.cp, fl: me.fl, ft: me.ft, cr: me.cr > 0 }, bots: botList().map((b) => `${b.n}:${Math.round(b.x)}${b.ft ? "F" : ""}${b.cr ? "X" : ""}/${b.fl}`).join(" ") }; } // for test scripts
+let last = performance.now(), lastHb = 0, lastHud = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const realNow = performance.now(); // timed on the real clock: after a long freeze the rAF time can be from before the wake
+  if (lastFrameAt && realNow - lastFrameAt > 1000) { wakeHold = realNow + 700; host.wasHost = false; host.last = null; } lastFrameAt = realNow; // woke from a freeze or a background tab: another player may have run the race meanwhile, so let their state arrive, then adopt it like a new host
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(dt, now); else host.wasHost = false;
+  const r = race(), t = Date.now();
+  if (r) { useTrack(r.track); myTick(dt, r, t); }
+  // camera: ahead of my bike, smoothly
+  const b = me.b;
+  cam.x += (b.x + clamp(b.vx, -5, 20) * 0.35 - cam.x) * Math.min(1, dt * 5);
+  cam.y += (b.y - cam.y) * Math.min(1, dt * 3);
+  if (me.shake > 0) { me.shake = Math.max(0, me.shake - dt * 2.5); cam.x += (Math.random() - 0.5) * me.shake * 0.4; cam.y += (Math.random() - 0.5) * me.shake * 0.4; }
+  drawSky(); drawGround();
+  // ghosts: everyone else, see-through
+  const tags = [], live = new Set(livePlayers()), seen = new Set();
+  if (r) {
+    for (const [id, p] of Object.entries(S.entities.players || {})) {
+      if (id === net.sessionId || !live.has(id)) continue;
+      const k = parse(p.k, null); if (!k || k.r !== r.id) continue;
+      seen.add(id); const v = follow(id, k, dt, now, false), crashed = ghostRider(v, k, dt);
+      drawBike(v, p.c || "#ccc", true, k.ln || 0, crashed); if (v.rider) drawFlyingRider(v.rider, p.c || "#ccc", 0.5);
+      tags.push([v, p.n || "Player"]);
+    }
+    const hostBots = isHost();
+    for (const bt of botList()) {
+      seen.add(bt.i); const v = follow(bt.i, bt, dt, now, hostBots), crashed = ghostRider(v, bt, dt);
+      drawBike(v, bt.c, true, bt.ln || 0, crashed); if (v.rider) drawFlyingRider(v.rider, bt.c, 0.5);
+      if (!ATTRACT) tags.push([v, bt.n]);
+    }
+  }
+  for (const id of views.keys()) if (!seen.has(id)) views.delete(id);
+  // my bike, solid, on top
+  if (b.gr && Math.abs(b.wheel) > 4 && (input.gas || ATTRACT) && Math.random() < 0.6) { const [rx, ry] = offset(b, WHEELS[0].x, WHEELS[0].y); dust(b.x + rx, b.y + ry - 0.3, b.vx); }
+  drawBike(b, myColor, false, me.lean, me.cr > 0);
+  if (rider) { tickRider(rider, dt); drawFlyingRider(rider, myColor, 1); }
+  drawParts(dt);
+  screen();
+  ctx.font = "bold 13px system-ui"; ctx.textAlign = "center";
+  for (const [v, name] of tags) { const x = sx(v.x), y = sy(v.y) - 50; ctx.lineWidth = 4; ctx.strokeStyle = "#0008"; ctx.strokeText(name, x, y); ctx.fillStyle = "#fff"; ctx.fillText(name, x, y); }
+  if (r && now - lastHud > 100) { lastHud = now; hud(r, now); }
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("again", () => again());
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...shared("bots", []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  if (ATTRACT) Object.assign(CONFIG, { countdown: 1500, resultsFor: 1500, seats: 6, botFlips: 0.6 });
+  started = performance.now();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

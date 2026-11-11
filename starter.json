@@ -1,0 +1,21 @@
+{
+  "name": "Trial Bikes",
+  "genre": "racing",
+  "dim": "2D",
+  "mode": "Versus",
+  "players": "2–8",
+  "hook": "Gas, lean, flip. Don't land on your head.",
+  "how": "Race dirt bikes over hills, jumps and steps while everyone else rides beside you as a ghost. Lean to land on both wheels: a flip takes a second off your time, a crash sends you back to the last checkpoint.",
+  "controls": "Up to gas, Down to brake, Left/Right to lean, R for the checkpoint, or on-screen buttons",
+  "uses": [
+    ["Leaderboard", "The best time on each of the three tracks."],
+    ["Host-run rounds", "The host's browser starts each race, picks the track and posts the results; if it leaves, the next player takes over."],
+    ["Bots", "Bots ride, flip and sometimes crash, until enough people join."],
+    ["Live sync", "Every bike rides the same track for everyone at once, as see-through ghosts."]
+  ],
+  "ideas": [
+    "Add a loop-the-loop on the first track",
+    "Add a nitro button that refills at each checkpoint",
+    "Make it a snowmobile race in the mountains"
+  ]
+}
