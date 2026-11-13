@@ -72,7 +72,7 @@
  *
  * WHERE THINGS ARE (search for the "── " headers):
  *   CONFIG ........ the bike's physics, flips, checkpoints, the three tracks, bots, timers
- *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host, the shared clock
  *   TRACKS ........ the ground's height everywhere, built from each track's seed
  *   BIKE PHYSICS .. ONE function that moves any bike: yours, a bot, everyone's
  *   RIDING ........ the autopilot bots use (lean to match the ground, flip off big jumps)
@@ -89,7 +89,10 @@
  *     `n`/`c` (name, color) once. Bikes don't touch: everyone else is a ghost.
  *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
  *     worked out every frame. Only the host writes the shared fields `race` (id, version
- *     `v`, phase, track, start and end times, results) and `bots`. A new host adopts both.
+ *     `v`, phase, track, start and end times, results), `bots` and `clk`. A new host adopts them.
+ *   - Times are on a SHARED CLOCK: the host writes `clk` (its clock) every 2 seconds and
+ *     everyone else keeps the offset, so the countdown, race times and crash timers are right
+ *     on a device whose own clock is off.
  *   - The tracks are built from fixed seeds, so the ground is never sent: race.track says
  *     which one, and every client builds the same hills.
  *   - A new race starts only when the host bumps race.id; every client then goes back to
@@ -122,6 +125,8 @@ const CONFIG = {
   resultsFor: 12000,      // ms the results show before the next race
   botSkill: [0.78, 0.95], // bots' throttle (share of full)
   botFlips: 0.3,          // chance a bot tries a flip off a big jump
+  flipAir: 0.95,          // seconds of air a bot needs before it tries a flip (a launch gives about 1)
+  botMisjudge: 0.1,       // chance a bot that wants to flip tries it off a jump too small for one (and crashes)
   board: "best-time",     // leaderboard prefix: one board per track (best-time-1, -2, -3)
   // The tracks: name, seed (same hills for everyone), length (m), which pieces it uses, and colors.
   tracks: [
@@ -189,6 +194,18 @@ function livePlayers() {
 }
 let wakeHold = 0, lastFrameAt = 0; // a tab whose frames stopped (frozen, or in the background) doesn't act as host, nor for 700ms after it wakes (see frame())
 const isHost = () => livePlayers()[0] === net.sessionId && performance.now() >= wakeHold && !(lastFrameAt && performance.now() - lastFrameAt > 1000);
+// The shared clock: the host's Date.now() plus its own offset, learned from `clk` changes. Race times,
+// the countdown and crash timers use it, so a device whose own clock is off still gets the right times.
+const clockSync = { offset: 0, seen: undefined, samples: [], lastWrite: 0 };
+const clock = () => Date.now() + clockSync.offset;
+function syncClock(now) {
+  if (isHost()) { if (now - clockSync.lastWrite > 2000) { clockSync.lastWrite = now; net.setShared("clk", clock()); } return; }
+  const clk = Number(S.shared.clk);
+  if (!clk || clk === clockSync.seen) return;
+  clockSync.samples = [...clockSync.samples.slice(-4), clk - Date.now()]; // the first value we see may be up to 2s old: later ones correct it
+  clockSync.offset = Math.max(...clockSync.samples); // the least-delayed sample is the best
+  clockSync.seen = clk;
+}
 
 // ── TRACKS ──────────────────────────────────────────────────────────────────────────
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -292,10 +309,15 @@ function autoRide(b, skill, flipChance) {
     const steepDown = slopeAt(b.x + 4) < -0.8 && b.vx > 11;
     return { gas: steepDown ? 0 : skill, brake: steepDown ? 0.4 : 0, lean: clamp(err * 4.5 - b.w * 0.6, -1, 1) };
   }
-  if (!b.flip) b.flip = b.vy > 4 && Math.random() < flipChance ? 1 : -1; // decided once, at take-off
+  if (!b.flip) b.flip = b.vy > 4 && Math.random() < flipChance && (airTime(b) > CONFIG.flipAir || Math.random() < CONFIG.botMisjudge) ? 1 : -1; // decided once, at take-off: only off a jump with time to come round
   if (b.flip === 1 && b.spin < Math.PI - 0.3) return { gas: 0, brake: 0, lean: 1 }; // half way round: the spin carries the rest
   const land = clamp(Math.atan(slopeAt(b.x + b.vx * 0.35)), -0.6, 0.6), err = angle(land - b.a);
   return { gas: 0.4, brake: 0, lean: clamp(err * 3.5 - b.w * 0.5, -1, 1) };
+}
+/** Seconds until a bike in the air comes down, if it flies on unpowered. */
+function airTime(b) {
+  for (let t = 0.05; t < 3; t += 0.05) if (b.y + b.vy * t - 0.5 * CONFIG.gravity * t * t - 0.72 < groundY(b.x + b.vx * t)) return t;
+  return 3;
 }
 
 // ── RACE (HOST) ─────────────────────────────────────────────────────────────────────
@@ -306,7 +328,7 @@ function race() {
   return host.last && isHost() && (!r || host.last.v > r.v) ? host.last : r;
 }
 function writeRace(r) { r = { ...r, v: (race()?.v ?? 0) + 1 }; host.last = r; net.setShared("race", JSON.stringify(r)); return r; }
-const newRace = (id) => writeRace({ id, phase: "grid", track: (id - 1) % CONFIG.tracks.length, startAt: Date.now() + CONFIG.countdown, endsAt: 0, results: [] });
+const newRace = (id) => writeRace({ id, phase: "grid", track: (id - 1) % CONFIG.tracks.length, startAt: clock() + CONFIG.countdown, endsAt: 0, results: [] });
 
 /** Everyone in this race as { id, name, x, ft, fl }, leader first: finishers by time, then by how far along. */
 function racers() {
@@ -340,7 +362,7 @@ function spawnBots(humans) {
 }
 function adoptBots() {
   host.bots.clear();
-  for (const b of shared("bots", [])) host.bots.set(b.i, Object.assign(newBike(b.x), { id: b.i, name: b.n, color: b.c, skill: b.sk || 0.85, x: b.x, y: b.y, a: b.a, vx: b.vx || 0, vy: b.vy || 0, cp: b.cp || 0, ft: b.ft || 0, fl: b.fl || 0, cr: b.cr || 0, lean: 0, best: b.x, stuckAt: Date.now(), flip: 0 }));
+  for (const b of shared("bots", [])) host.bots.set(b.i, Object.assign(newBike(b.x), { id: b.i, name: b.n, color: b.c, skill: b.sk || 0.85, x: b.x, y: b.y, a: b.a, vx: b.vx || 0, vy: b.vy || 0, cp: b.cp || 0, ft: b.ft || 0, fl: b.fl || 0, cr: b.cr || 0, lean: 0, best: b.x, stuckAt: clock(), flip: 0 }));
 }
 
 function hostTick(dt, now) {
@@ -350,7 +372,7 @@ function hostTick(dt, now) {
   if (!r) r = newRace(1);
   if (host.raceId !== r.id) { host.raceId = r.id; useTrack(r.track); if (r.phase === "grid") spawnBots(humans); }
   else if (r.phase === "grid" && host.bots.size !== Math.max(0, CONFIG.seats - humans.length)) spawnBots(humans); // someone joined or left before GO
-  const t = Date.now();
+  const t = clock();
   if (r.phase === "grid" && t >= r.startAt) r = writeRace({ ...r, phase: "race" });
   if (r.phase === "race") {
     const all = racers(), done = all.filter((x) => x.ft);
@@ -400,7 +422,7 @@ const input = { gas: false, brake: false, back: false, fwd: false, reset: false 
 function useTrack(t) { if (track.t !== t) track = buildTrack(t); }
 function resetToStart(r) {
   me.raceId = r.id; useTrack(r.track);
-  Object.assign(me, { b: newBike(3), t0: r.phase === "grid" ? r.startAt : Date.now(), cp: 0, fl: 0, ft: 0, cr: 0 });
+  Object.assign(me, { b: newBike(3), t0: r.phase === "grid" ? r.startAt : clock(), cp: 0, fl: 0, ft: 0, cr: 0 });
   rider = null; $("over").hidden = true;
 }
 function respawn() { me.b = newBike(checkpointX(me.cp) + 2); me.cr = 0; rider = null; }
@@ -586,7 +608,7 @@ let toastTimer = 0;
 function toast(text, ms = 1500) { if (ATTRACT) return; const m = $("msg"); m.textContent = text; m.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => m.classList.remove("on"), ms); }
 let board = null, boardFor = -1, lastCount = "", started = 0;
 function hud(r, now) {
-  const t = Date.now();
+  const t = clock();
   const count = r.phase === "grid" && r.startAt - t < 3000 ? String(Math.max(1, Math.ceil((r.startAt - t) / 1000))) : r.phase === "race" && t - r.startAt < 900 ? "GO!" : "";
   if (count !== lastCount) { lastCount = count; if (count === "GO!") beep(880, 0.4); else if (count) beep(440, 0.15); }
   $("count").textContent = count;
@@ -634,6 +656,7 @@ const wakeAudio = () => { if (!actx) { try { actx = new (window.AudioContext || 
 const KEYS = { ArrowUp: "gas", w: "gas", W: "gas", ArrowDown: "brake", s: "brake", S: "brake", ArrowLeft: "back", a: "back", A: "back", ArrowRight: "fwd", d: "fwd", D: "fwd", r: "reset", R: "reset" };
 addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.key]; if (k) { e.preventDefault(); if (k === "reset") { if (!e.repeat) input.reset = true; } else input[k] = true; } });
 addEventListener("keyup", (e) => { const k = KEYS[e.key]; if (k && k !== "reset") input[k] = false; });
+addEventListener("blur", () => { input.gas = input.brake = input.back = input.fwd = false; }); // a key held while the tab loses focus never sends its keyup
 for (const b of document.querySelectorAll(".pad button")) {
   const k = b.dataset.k, on = (v) => { input[k] = v; b.classList.toggle("on", v); };
   b.addEventListener("pointerdown", (e) => { e.preventDefault(); wakeAudio(); b.setPointerCapture(e.pointerId); on(true); });
@@ -661,7 +684,7 @@ function follow(id, k, dt, now, exact) {
 }
 /** A ghost's crash: start its flying rider when its crashed-until time appears. */
 function ghostRider(v, k, dt) {
-  if (k.cr && k.cr > Date.now()) { if (!v.rider || v.crAt !== k.cr) { v.crAt = k.cr; v.rider = { x: v.x, y: v.y + 0.8, vx: (k.vx || 0) * 0.7, vy: Math.max(3, (k.vy || 0) + 4), rot: v.a, w: -6 }; } tickRider(v.rider, dt); return true; }
+  if (k.cr && k.cr > clock()) { if (!v.rider || v.crAt !== k.cr) { if (k.cr - clock() < CONFIG.crashFor / 2) return false; /* a quick reset to the checkpoint (R), not a crash */ v.crAt = k.cr; v.rider = { x: v.x, y: v.y + 0.8, vx: (k.vx || 0) * 0.7, vy: Math.max(3, (k.vy || 0) + 4), rot: v.a, w: -6 }; } tickRider(v.rider, dt); return true; }
   v.rider = null; return false;
 }
 function game() { const r = race(); return { phase: r && r.phase, id: r && r.id, track: track.t, me: { x: +me.b.x.toFixed(1), cp: me.cp, fl: me.fl, ft: me.ft, cr: me.cr > 0 }, bots: botList().map((b) => `${b.n}:${Math.round(b.x)}${b.ft ? "F" : ""}${b.cr ? "X" : ""}/${b.fl}`).join(" ") }; } // for test scripts
@@ -672,8 +695,9 @@ function frame(now) {
   if (lastFrameAt && realNow - lastFrameAt > 1000) { wakeHold = realNow + 700; host.wasHost = false; host.last = null; } lastFrameAt = realNow; // woke from a freeze or a background tab: another player may have run the race meanwhile, so let their state arrive, then adopt it like a new host
   const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  syncClock(now);
   if (isHost()) hostTick(dt, now); else host.wasHost = false;
-  const r = race(), t = Date.now();
+  const r = race(), t = clock();
   if (r) { useTrack(r.track); myTick(dt, r, t); }
   // camera: ahead of my bike, smoothly
   const b = me.b;
@@ -706,7 +730,11 @@ function frame(now) {
   drawParts(dt);
   screen();
   ctx.font = "bold 13px system-ui"; ctx.textAlign = "center";
-  for (const [v, name] of tags) { const x = sx(v.x), y = sy(v.y) - 50; ctx.lineWidth = 4; ctx.strokeStyle = "#0008"; ctx.strokeText(name, x, y); ctx.fillStyle = "#fff"; ctx.fillText(name, x, y); }
+  const placed = []; // name tags that would overlap stack upwards, so a bunch of bikes stays readable
+  for (const [v, name] of tags.sort((p, q) => p[0].x - q[0].x)) {
+    const x = sx(v.x), w = ctx.measureText(name).width + 6; let y = sy(v.y) - 50;
+    while (placed.some((p) => Math.abs(p.x - x) < (p.w + w) / 2 && Math.abs(p.y - y) < 14)) y -= 15;
+    placed.push({ x, y, w }); ctx.lineWidth = 4; ctx.strokeStyle = "#0008"; ctx.strokeText(name, x, y); ctx.fillStyle = "#fff"; ctx.fillText(name, x, y); }
   if (r && now - lastHud > 100) { lastHud = now; hud(r, now); }
 }
 
